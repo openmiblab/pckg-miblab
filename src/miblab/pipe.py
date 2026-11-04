@@ -376,8 +376,22 @@ def run_ppln(run, default_build, pipeline, **args):
 def run_stage(run, default_build, pipeline, module, **args):
     parser = argparse.ArgumentParser()
     parser.add_argument("--build", type=str, default=default_build, help="Build folder")
+
+    # for arg, kwargs in args.items():
+    #     parser.add_argument(f"--{arg}", **kwargs)
+
     for arg, kwargs in args.items():
-        parser.add_argument(f"--{arg}", **kwargs)
+            # Check if a custom 'nargs' or 'type' is already explicitly provided
+            # Otherwise, if the default value passed is a list, automatically set nargs='+'
+            if 'default' in kwargs and isinstance(kwargs['default'], list):
+                kwargs.setdefault('nargs', '+')
+                # If the list contains integers/floats, ensure argparse converts every item
+                if kwargs['default'] and not 'type' in kwargs:
+                    kwargs['type'] = type(kwargs['default'][0])
+
+            parser.add_argument(f"--{arg}", **kwargs)
+            
+
     args = parser.parse_args()
 
     dir_output = stage_output_dir(args.build, pipeline, module)

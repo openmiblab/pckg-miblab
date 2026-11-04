@@ -3,6 +3,7 @@ import os
 import shutil
 import csv
 from pathlib import Path
+import subprocess
 
 
 import pylatex as pl
@@ -364,8 +365,8 @@ def figure(doc, file, width='6in', caption=None, clearpage=False):
         )
     if clearpage:
         doc.append(NoEscape('\\clearpage'))
-    with doc.create(pl.Figure(position='h!')) as pic:
-        pic.add_image(file, width=width)
+    with doc.create(pl.Figure(position='H')) as pic:
+        pic.add_image(file, width=NoEscape(r'0.95\textwidth'))
         if caption is not None:
             pic.add_caption(caption)
 
@@ -381,6 +382,9 @@ def table(doc, file, cwidth=None, caption=None, clearpage=False):
         cwidth (str, optional): Column width. Defaults to None (automaticaly chosen).
         caption (str, optional): Caption for the table. Defaults to None.
     """
+    # Normalize the incoming file path to use forward slashes
+    file = os.path.abspath(file).replace('\\', '/')
+
     if not os.path.exists(file):
         raise ValueError(
             f"Cannot insert table.\n"
@@ -388,7 +392,8 @@ def table(doc, file, cwidth=None, caption=None, clearpage=False):
         )
     if clearpage:
         doc.append(NoEscape('\\clearpage'))
-    with open(file, mode='r', newline='') as f:
+
+    with open(file, mode='r', newline='', encoding='utf-8') as f:
         reader = csv.reader(f)
         header = next(reader)
         data = list(reader)
@@ -398,6 +403,7 @@ def table(doc, file, cwidth=None, caption=None, clearpage=False):
         format = 'r' + 'c'*cols
     else:
         format = '|p{'+str(cwidth)+'cm}|'+('p{'+str(cwidth)+'cm}|')*cols
+
     with doc.create(pl.LongTable(format)) as table:
         table.add_hline()
         table.add_row(header)
@@ -405,14 +411,16 @@ def table(doc, file, cwidth=None, caption=None, clearpage=False):
         for row in data:
             table.add_row(row)
         table.add_hline()
+
         if caption is not None:
+            # FIX 2: If the caption is a file path, fix the backslashes first
+            caption = caption.replace('\\', '/')
             for char in ['_','#','$','%','&','{','}','^']:
                 caption = caption.replace(char, '\\'+char)
             table.append(NoEscape(r'\caption{'+caption+r'} \\'))
 
 
 def build(doc: pl.Document, folder, filename):
-
     path = os.path.abspath("")
     # Create report
     outputpath = os.path.join(folder, filename + '_source')
@@ -420,7 +428,7 @@ def build(doc: pl.Document, folder, filename):
         os.makedirs(outputpath)
     
     # Build twice so all references are correct
-    for _ in [1,2]:
+    for run_count in [1, 2]:
         try:
             doc.generate_pdf(
                 filename, 
@@ -429,12 +437,54 @@ def build(doc: pl.Document, folder, filename):
                 compiler='pdfLaTeX', 
                 compiler_args=['-output-directory', outputpath],
             )
-        except UnicodeDecodeError:
+        except subprocess.CalledProcessError as e:
+            # 1. Safely decode the raw LaTeX compiler log, ignoring bad Windows characters
+            latex_logs = e.output.decode('utf-8', errors='replace') if e.output else "No log output available."
+            
+            # 2. Try to extract just the relevant error lines to keep the console clean
+            error_lines = [line for line in latex_logs.splitlines() if line.startswith('!') or 'Error' in line]
+            summary = "\n".join(error_lines) if error_lines else "Review the generated .log file for details."
+            
+            # 3. Raise an incredibly detailed exception
             raise RuntimeError(
-                "Can't build LaTeX file due to incorrect "
-                "formatting. \nTo debug, build the document section "
-                "by section."
-            )
+                f"\n{'='*60}\n"
+                f"LaTeX Compilation Failed during run #{run_count}!\n"
+                f"Target File: {os.path.join(outputpath, filename + '.tex')}\n"
+                f"{'-'*60}\n"
+                f"Compiler Summary:\n{summary}\n"
+                f"{'-'*60}\n"
+                f"Common Causes:\n"
+                f"  1. Unescaped special characters in data (e.g., '_', '&', '%', '$')\n"
+                f"  2. Windows backslashes '\\' in image/file paths (convert them to '/')\n"
+                f"  3. Broken math syntax or unclosed structural blocks\n"
+                f"{'='*60}"
+            ) from e
+
+
+# def build(doc: pl.Document, folder, filename):
+
+#     path = os.path.abspath("")
+#     # Create report
+#     outputpath = os.path.join(folder, filename + '_source')
+#     if not os.path.exists(outputpath):
+#         os.makedirs(outputpath)
+    
+#     # Build twice so all references are correct
+#     for _ in [1,2]:
+#         try:
+#             doc.generate_pdf(
+#                 filename, 
+#                 clean=False, 
+#                 clean_tex=False, 
+#                 compiler='pdfLaTeX', 
+#                 compiler_args=['-output-directory', outputpath],
+#             )
+#         except UnicodeDecodeError:
+#             raise RuntimeError(
+#                 "Can't build LaTeX file due to incorrect "
+#                 "formatting. \nTo debug, build the document section "
+#                 "by section."
+#             )
 
     # Move all files to output folder and clean up
     force_move(os.path.join(path, 'cover.jpg'), os.path.join(outputpath, 'cover.jpg'))
